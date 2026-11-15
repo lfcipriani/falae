@@ -58,6 +58,7 @@ falae turns an article into a single narrated MP3. It uses Google Cloud Text-to-
 
    Options: `voice`, `input_format` (`ssml` or `markup`) and `speaking_rate`.
    - Every optional field, options included, can be sent as `""`, a whitespace-only string or `null`, and counts as not sent: options fall back to their defaults. Empty `language` or `content` still gets a `422`.
+   - Unknown fields get a `422` that names them, so a typo such as `takeaway` is caught instead of silently dropped.
    - An invalid `published_date` is ignored (treated as unset) and logged, instead of failing the request. ISO datetimes such as `2026-11-15T10:30:00Z` are accepted and keep only the date.
    - **Languages and voices** (`languages.py`): `LANGUAGES` and `VOICES` copy the [Chirp 3 HD](https://docs.cloud.google.com/text-to-speech/docs/chirp3-hd) lists by hand. Update them when Google changes the page.
      - The language is checked against `LANGUAGES`, ignoring case. Unsupported languages are rejected (422 from the API, an error from the CLI).

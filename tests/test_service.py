@@ -121,6 +121,14 @@ def test_api_rejects_unsupported_language():
     assert "isn't supported" in resp.text
 
 
+@pytest.mark.parametrize("typo", ["takeaway", "takeways", "Takeaways"])
+def test_api_rejects_unknown_fields(typo):
+    resp = TestClient(api.app).post("/synthesize", json={
+        "language": "pt-BR", "content": "Texto.", typo: "- Um ponto."})
+    assert resp.status_code == 422
+    assert typo in resp.text
+
+
 OPTIONAL_FIELDS = ["title", "author", "published_date", "link", "takeaways",
                    "voice", "input_format", "speaking_rate"]
 

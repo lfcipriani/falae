@@ -9,7 +9,7 @@ from functools import lru_cache
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Request, Security, status
 from fastapi.security import APIKeyHeader
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .auth import API_KEY_HEADER, AccessPolicy
 from .languages import resolve_language
@@ -58,6 +58,10 @@ def require_access(
 
 
 class SynthesizeRequest(BaseModel):
+    # Unknown fields are a 422, not silently dropped: a typo such as "takeway" would otherwise
+    # be accepted and the article synthesized without the field.
+    model_config = ConfigDict(extra="forbid")
+
     language: str = Field(
         min_length=2,
         examples=["pt-BR", "en-US", "en"],
