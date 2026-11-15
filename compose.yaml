@@ -1,0 +1,36 @@
+# Usage: cp .env.sample .env, edit it, then `docker compose up --build`.
+name: falae
+
+services:
+  falae:
+    build: .
+    image: falae
+    restart: unless-stopped
+    ports:
+      - "${FALAE_PORT:-8013}:8013"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Fixed inside the container; with FALAE_STORAGE=local the MP3s land in ./output on the host.
+      PORT: "8013"
+      FALAE_OUTPUT_DIR: /output
+      # Points at the mounted copy below; .env holds the host path.
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp.json
+    volumes:
+      - ./output:/output
+      # Google credentials file: a service account key, or your gcloud ADC file by default.
+      # Long syntax so a missing file fails at startup instead of becoming an empty directory.
+      - type: bind
+        source: ${GOOGLE_APPLICATION_CREDENTIALS:-~/.config/gcloud/application_default_credentials.json}
+        target: /secrets/gcp.json
+        read_only: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8013/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  n8n_default:
+    external: true
