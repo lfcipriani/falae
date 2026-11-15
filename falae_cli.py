@@ -23,7 +23,9 @@ from dotenv import load_dotenv
 from falae.languages import resolve_language
 from falae.models import Article, InputFormat, SynthesisOptions
 from falae.service import synthesize_article
-from falae.storage import DEFAULT_GCS_BUCKET, GCSStorage, LocalStorage
+from falae.storage import (
+    DEFAULT_GCS_BUCKET, STORAGE_KINDS, GCSStorage, LocalStorage, Storage, dropbox_storage_from_env,
+)
 from falae.text import build_chunks
 
 
@@ -32,6 +34,14 @@ def _language(value: str) -> str:
         return resolve_language(value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _storage(args: argparse.Namespace) -> Storage:
+    if args.storage == "gcs":
+        return GCSStorage(args.bucket)
+    if args.storage == "dropbox":
+        return dropbox_storage_from_env(folder=args.dropbox_folder)
+    return LocalStorage(args.output_dir)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,11 +58,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--voice", default="Charon", help="Chirp 3 HD voice short name or full name")
     p.add_argument("--format", choices=[f.value for f in InputFormat], default="ssml")
     p.add_argument("--speaking-rate", type=float, default=1.0)
-    p.add_argument("--storage", choices=["local", "gcs"], default="local",
+    p.add_argument("--storage", choices=STORAGE_KINDS, default="local",
                    help="where to save the MP3 (default: local)")
     p.add_argument("--output-dir", default="output", help="directory for --storage local")
     p.add_argument("--bucket", default=DEFAULT_GCS_BUCKET,
                    help=f"bucket for --storage gcs (default: {DEFAULT_GCS_BUCKET})")
+    p.add_argument("--dropbox-folder",
+                   help="folder for --storage dropbox (default: FALAE_DROPBOX_FOLDER, else the app "
+                        "folder root); credentials come from FALAE_DROPBOX_* in the environment/.env")
     p.add_argument("--dry-run", action="store_true", help="print the chunks; don't call TTS")
     args = p.parse_args(argv)
 
@@ -72,7 +85,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"--- chunk {i}/{len(chunks)} ({len(chunk.encode())} bytes) ---\n{chunk}\n")
         return 0
 
-    storage = GCSStorage(args.bucket) if args.storage == "gcs" else LocalStorage(args.output_dir)
+    try:
+        storage = _storage(args)
+    except ValueError as exc:
+        p.error(str(exc))
     result = synthesize_article(article, storage, options)
     print(f"Saved {result.location} ({result.chunks} chunks, {result.characters} billed chars, "
           f"{result.bytes / 1024:.0f} KiB)")

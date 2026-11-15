@@ -7,7 +7,9 @@ services:
     image: falae
     restart: unless-stopped
     ports:
-      - "${FALAE_PORT:-8013}:8013"
+      # Bound to localhost only: reachable from this machine (curl localhost:8013), not from the
+      # internet. n8n reaches it over the n8n_default network at http://falae:8013.
+      - "127.0.0.1:${FALAE_PORT:-8013}:8013"
     env_file:
       - path: .env
         required: false

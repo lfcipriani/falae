@@ -39,7 +39,7 @@ falae turns an article into a single narrated MP3. It uses Google Cloud Text-to-
  ┌───────────┐   ┌───────────┐   ┌───────────┐   ┌────────────┐
  │ markdown  │ → │ tts.py    │ → │ audio.py  │ → │ storage.py │
  │ + text.py │   │ Chirp 3HD │   │ ffmpeg    │   │ local / GCS│
- │ → chunks  │   │ → MP3s    │   │ concat    │   │            │
+ │ → chunks  │   │ → MP3s    │   │ concat    │   │ / Dropbox  │
  └───────────┘   └───────────┘   └───────────┘   └────────────┘
 ```
 
@@ -96,17 +96,23 @@ falae turns an article into a single narrated MP3. It uses Google Cloud Text-to-
    - A `Storage` interface has two methods: `path_for` and `publish`. The file is named `<date>-<title-slug>.mp3`. Without a date the prefix is dropped; without a title it uses the first heading, then `article-<hash>`.
    - `LocalStorage` writes to `FALAE_OUTPUT_DIR` (default `./output`). `publish` returns the file path.
    - `GCSStorage` writes to a temp dir, uploads the file to the bucket as `audio/mpeg`, deletes the local copy and returns `gs://<bucket>/<file>`. The bucket defaults to `com-talleye-falae`.
+   - `DropboxStorage` works the same way: it uploads to `FALAE_DROPBOX_FOLDER` and returns `dropbox:/<folder>/<file>`. An existing file with the same name is overwritten.
+     - It authenticates with a **refresh token** plus the app key and secret, so it never expires. The SDK fetches short-lived access tokens itself. See [Dropbox setup](#dropbox-setup).
+     - Files up to 150 MB (about 2.5 hours of audio) are sent in one request; bigger ones use an upload session.
+     - The folder is created by Dropbox on the first upload. With an "App folder" app it's relative to `Apps/<app name>/`; empty means that folder itself.
    - The destination is set per instance, never per request. The API builds one storage per process from the environment:
 
      | Variable | Default | Notes |
      |---|---|---|
-     | `FALAE_STORAGE` | `local` | `local` or `gcs`. Set it in `.env`; the image has no default of its own. |
+     | `FALAE_STORAGE` | `local` | `local`, `gcs` or `dropbox`. Set it in `.env`; the image has no default of its own. |
      | `FALAE_GCS_BUCKET` | `com-talleye-falae` | Used when `FALAE_STORAGE=gcs`. |
      | `FALAE_OUTPUT_DIR` | `output` | Used when `FALAE_STORAGE=local`. |
+     | `FALAE_DROPBOX_FOLDER` | app folder root | Used when `FALAE_STORAGE=dropbox`, e.g. `/falae`. |
+     | `FALAE_DROPBOX_APP_KEY`, `FALAE_DROPBOX_APP_SECRET`, `FALAE_DROPBOX_REFRESH_TOKEN` | — | Required when `FALAE_STORAGE=dropbox`; if any is missing the server won't start. |
 
 ### Entry points
 
-- **`falae/api.py`** is the HTTP service that will run on Cloud Run. It has `POST /synthesize` and `GET /healthz`.
+- **`falae/api.py`** is the HTTP service. It has `POST /synthesize` and `GET /healthz`.
   - `POST /synthesize` is asynchronous: synthesis takes 30–60 seconds, so the endpoint only validates the request and returns **`202 Accepted`** with `{"status": "accepted", "location": "gs://com-talleye-falae/<file>.mp3"}`. Invalid input still gets an immediate `422`.
   - The pipeline then runs as a FastAPI background task after the response is sent. Check `location` for the file, or set a webhook (below) to be told when it's done.
   - The task is a plain `def`, so the blocking TTS and ffmpeg work runs in the threadpool.
@@ -117,41 +123,31 @@ falae turns an article into a single narrated MP3. It uses Google Cloud Text-to-
   {"storage": "gcs", "file_path": "gs://com-talleye-falae/<file>.mp3", "message": "The audio file is ready for you!"}
   ```
 
-  - `storage` is `local` or `gcs`; `file_path` is the same value as `location` in the `202` response.
+  - `storage` is `local`, `gcs` or `dropbox`; `file_path` is the same value as `location` in the `202` response.
   - On failure, `message` is the error message (no traceback), and `file_path` is where the file would have been.
   - Delivery is best effort: one attempt with a 10-second timeout, no retries. A failed delivery is logged (`webhook delivery failed for <file>`) and doesn't affect the job.
   - The URL must be `http` or `https`; anything else stops the server at startup. The CLI ignores it.
-- **Access control** (`falae/auth.py`) applies to `POST /synthesize` only; `GET /healthz` stays open. Both settings are optional and fixed per process:
-
-  | Variable | Effect when set | When unset |
-  |---|---|---|
-  | `FALAE_API_KEY` | Requests must send this value in the `X-API-Key` header, or they get `401`. | No key needed. A warning is logged at startup. |
-  | `FALAE_ALLOWED_IPS` | Comma-separated IPs or CIDRs, e.g. `203.0.113.7, 198.51.100.0/24`. Other clients get `403`. | Any IP is accepted. |
-
-  - Access is checked before the request body is validated, so a rejected caller learns nothing about the API.
-  - The client IP is the **rightmost** `X-Forwarded-For` entry, which Cloud Run's front end appends; entries to its left come from the client and can be forged. Without the header (running locally), the socket address is used. If you ever put a load balancer in front, the rightmost entry becomes the balancer's address and this needs revisiting.
-  - A malformed `FALAE_ALLOWED_IPS` stops the server at startup instead of failing every request.
+- **Access control** (`falae/auth.py`) applies to `POST /synthesize` only; `GET /healthz` stays open.
+  - If `FALAE_API_KEY` is set, requests must send it in the `X-API-Key` header, or they get `401`. If it's unset, no key is needed and a warning is logged at startup. It's fixed per process.
+  - The key is checked before the request body is validated, so a rejected caller learns nothing about the API.
 - **`falae_cli.py`** runs the same pipeline from the command line, without a server. Add `--dry-run` to print the chunks without calling Google.
 
 ### Seams for testing and extension
 
 - **`Synthesizer`** is an interface. Tests pass in a fake that returns silent MP3s, so they never call Google.
-- **`Storage`** is an interface, so adding an upload destination doesn't change the rest of the pipeline. `GCSStorage` accepts an injected client; tests pass a fake, so they never call GCS.
+- **`Storage`** is an interface, so adding an upload destination doesn't change the rest of the pipeline. `GCSStorage` and `DropboxStorage` accept an injected client; tests pass fakes, so they never call GCS or Dropbox.
 
 ### Deployment
 
+The service runs on a VPS with Docker Compose (see [Run with Docker Compose](#run-with-docker-compose)).
+
 - The `Dockerfile` is based on `python:3.11-slim`, adds ffmpeg, and starts uvicorn on `$PORT`.
-- **Keep the API key in Secret Manager**, not in plain environment variables:
-  ```sh
-  openssl rand -base64 32 | tr -d '\n' | gcloud secrets create falae-api-key --data-file=-
-  gcloud run deploy falae … --set-secrets FALAE_API_KEY=falae-api-key:latest \
-    --set-env-vars '^;^FALAE_STORAGE=gcs;FALAE_ALLOWED_IPS=203.0.113.7,198.51.100.0/24'
-  ```
-  The runtime service account needs `roles/secretmanager.secretAccessor` on the secret. The `^;^` prefix changes gcloud's list separator, so the commas stay inside the value. In n8n, use a **Header Auth** credential with name `X-API-Key` and the secret as the value.
-- **Run it with CPU always allocated** (`gcloud run deploy … --no-cpu-throttling`). By default, Cloud Run only gives an instance CPU while a request is in flight, so background synthesis after the `202` would stall or be lost.
-  - Even then, an instance that's being shut down gets about 10 seconds' notice, so a job in progress can still be lost on scale-in or redeploy. If that becomes a problem, the next step is a queue such as Cloud Tasks calling a worker endpoint, which retries.
-- **Set `FALAE_STORAGE=gcs` on Cloud Run** (as above). The image doesn't default to it, and without it MP3s go to Cloud Run's local disk, which is lost when the container stops. Add `FALAE_GCS_BUCKET` if your bucket isn't `com-talleye-falae`. The service account needs `roles/storage.objectUser` on the bucket. `objectCreator` isn't enough: re-synthesizing an article overwrites its file, which needs delete permission.
-- Authentication uses Application Default Credentials. That's the service account on Cloud Run, and `gcloud auth application-default login` locally.
+- **Secrets live in `.env` on the server** (`FALAE_API_KEY`, `FALAE_DROPBOX_*`) and the Google key file. Neither is copied into the image. Restrict them to your user: `chmod 600 .env /path/to/key.json`.
+  - Generate the API key with `openssl rand -base64 32`. In n8n, use a **Header Auth** credential with name `X-API-Key` and the key as the value.
+- **Jobs run in the background inside the process**, after the `202`. Restarting or stopping the container (`docker compose up --build`, `restart`, a reboot) loses any job in progress, and nothing retries it. If that becomes a problem, the next step is a persistent job queue.
+- **Pick a storage that survives the container**: `local` writes to `./output` on the host (mounted at `/output`), `gcs` uploads to the bucket, `dropbox` uploads to Dropbox.
+  - For `gcs`, the service account needs `roles/storage.objectUser` on the bucket. `objectCreator` isn't enough: re-synthesizing an article overwrites its file, which needs delete permission.
+- Google authentication uses the credentials file mounted by `compose.yaml` (`GOOGLE_APPLICATION_CREDENTIALS`).
 
 ## Development setup
 
@@ -187,7 +183,6 @@ gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
 ```
 
 - **Text-to-Speech** has no per-resource permissions: a service account in a project with the API enabled can call it. If you get `PERMISSION_DENIED` from TTS, grant the service account the *Cloud Text-to-Speech API User* role on the project.
-- **On Cloud Run**, stop here: deploy with `--service-account "$SA"` and no key is needed.
 
 **For Docker Compose on a server, or the CLI: create a key file.**
 
@@ -211,6 +206,27 @@ gcloud auth application-default set-quota-project "$PROJECT_ID"   # bills TTS ca
 
 Leave `GOOGLE_APPLICATION_CREDENTIALS` empty. The CLI and uvicorn find this login automatically, and compose mounts `~/.config/gcloud/application_default_credentials.json`. Your user needs access to the bucket; project Owners already have it.
 
+### Dropbox setup
+
+Only needed with `FALAE_STORAGE=dropbox` (or `--storage dropbox`). Do this once.
+
+1. In the [Dropbox App Console](https://www.dropbox.com/developers/apps), create an app with **Scoped access** and **App folder** access. falae then sees only `Apps/<app name>/`, not the rest of your Dropbox.
+2. On the **Permissions** tab, tick `files.content.write` and click **Submit**. Do this before step 4: a token only carries the scopes enabled when it was issued.
+3. On the **Settings** tab, copy the **App key** and **App secret**.
+4. Get a refresh token. Open this URL in a browser, approve, and copy the code shown:
+   ```
+   https://www.dropbox.com/oauth2/authorize?client_id=APP_KEY&response_type=code&token_access_type=offline
+   ```
+   Then exchange the code (it's valid for a few minutes) and copy `refresh_token` from the response:
+   ```sh
+   curl https://api.dropboxapi.com/oauth2/token \
+     -d code=CODE -d grant_type=authorization_code -u APP_KEY:APP_SECRET
+   ```
+5. Put the three values in `.env` as `FALAE_DROPBOX_APP_KEY`, `FALAE_DROPBOX_APP_SECRET` and `FALAE_DROPBOX_REFRESH_TOKEN`, and optionally set `FALAE_DROPBOX_FOLDER`.
+
+- The refresh token doesn't expire, but it stops working if you revoke the app's access in your Dropbox settings or change its permissions. Treat it like a password.
+- Google credentials are still needed for Text-to-Speech.
+
 ### Install
 
 ```sh
@@ -227,7 +243,7 @@ This installs the package in editable mode, plus `pytest` and `httpx` for the te
 cp .env.sample .env   # then fill in the values you need
 ```
 
-`.env.sample` lists every setting with comments. `.env` is git- and docker-ignored. It's read by `docker compose`, by `uvicorn --env-file .env`, and by `falae_cli.py` (for credentials such as `GOOGLE_APPLICATION_CREDENTIALS`; storage is still chosen with CLI flags). Variables already set in your shell take precedence. Tests ignore `.env`.
+`.env.sample` lists every setting with comments. `.env` is git- and docker-ignored. It's read by `docker compose`, by `uvicorn --env-file .env`, and by `falae_cli.py` (for credentials such as `GOOGLE_APPLICATION_CREDENTIALS` and `FALAE_DROPBOX_*`; storage is still chosen with CLI flags). Variables already set in your shell take precedence. Tests ignore `.env`.
 
 ### Run the tests
 
@@ -249,6 +265,7 @@ The tests use a fake `Synthesizer`, so they don't need credentials or network ac
 - `--content-file -` (the default) reads the article from stdin.
 - Other options: `--voice`, `--format` (`ssml` or `markup`), `--speaking-rate` and `--output-dir` (default `output`). See `./falae_cli.py --help`.
 - Add `--storage gcs` to upload to GCS instead; `--bucket` picks the bucket (default `com-talleye-falae`).
+- Add `--storage dropbox` to upload to Dropbox. Credentials come from `FALAE_DROPBOX_*` in `.env` or your shell; `--dropbox-folder` overrides `FALAE_DROPBOX_FOLDER`.
 - The script runs with `python3` from your `PATH`, so activate the virtualenv first.
 
 ### Run the HTTP service
@@ -258,7 +275,7 @@ uvicorn falae.api:app --reload --port 8013 --env-file .env
 curl localhost:8013/healthz
 ```
 
-Send articles to `POST /synthesize` (add `-H 'X-API-Key: …'` if you set `FALAE_API_KEY`). MP3s are written to `FALAE_OUTPUT_DIR` (default `./output`). Start it with `FALAE_STORAGE=gcs` to upload to `com-talleye-falae` instead (or set `FALAE_GCS_BUCKET`).
+Send articles to `POST /synthesize` (add `-H 'X-API-Key: …'` if you set `FALAE_API_KEY`). MP3s are written to `FALAE_OUTPUT_DIR` (default `./output`). Start it with `FALAE_STORAGE=gcs` to upload to `com-talleye-falae` instead (or set `FALAE_GCS_BUCKET`), or with `FALAE_STORAGE=dropbox` to upload to Dropbox.
 
 ### Run with Docker Compose
 
@@ -267,7 +284,9 @@ cp .env.sample .env   # if you haven't yet
 docker compose up --build
 ```
 
-- `compose.yaml` builds the image, publishes it on `FALAE_PORT` (default `8013`), and loads `.env` into the container.
+- `compose.yaml` builds the image, publishes it on `127.0.0.1:FALAE_PORT` (default `8013`), and loads `.env` into the container.
+  - The port is bound to localhost only, so `curl localhost:8013` works on the machine itself, but the service isn't reachable from the internet.
+  - n8n reaches it over the `n8n_default` Docker network at `http://falae:8013`.
 - The file at `GOOGLE_APPLICATION_CREDENTIALS` (a host path) is mounted read-only at `/secrets/gcp.json`, and the variable is pointed there inside the container. Unset, it mounts your `gcloud auth application-default login` file. If the file doesn't exist, the container won't start. See [Google Cloud setup](#google-cloud-setup).
 - With `FALAE_STORAGE=local`, MP3s are written to `./output` on the host. If `.env` doesn't set `FALAE_STORAGE`, it defaults to `local`.
 - A healthcheck polls `/healthz`, and the service restarts unless stopped.

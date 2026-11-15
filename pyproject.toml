@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "google-cloud-texttospeech>=2.38",
     "google-cloud-storage>=2.18",
+    "dropbox>=12.0",
     "markdown-it-py>=3.0",
     "fastapi>=0.115",
     "uvicorn>=0.30",

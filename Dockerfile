@@ -11,5 +11,4 @@ RUN pip install --no-cache-dir .
 
 # Settings come from .env at runtime (compose.yaml, or `docker run --env-file .env`); nothing is
 # baked in, and .env itself is docker-ignored so secrets never land in an image layer.
-# On Cloud Run, pass them with --set-env-vars / --set-secrets. Cloud Run also sets PORT.
 CMD exec uvicorn falae.api:app --host 0.0.0.0 --port ${PORT:-8013}
