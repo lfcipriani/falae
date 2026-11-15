@@ -16,6 +16,8 @@ DEFAULT_GCS_BUCKET = "com-talleye-falae"
 
 
 class Storage(Protocol):
+    kind: str  # "local" or "gcs", reported to the webhook
+
     def path_for(self, filename: str) -> Path:
         """Local path where the MP3 should be written."""
         ...
@@ -30,6 +32,8 @@ class Storage(Protocol):
 
 
 class LocalStorage:
+    kind = "local"
+
     def __init__(self, base_dir: str | Path):
         self.base_dir = Path(base_dir).expanduser().resolve()
 
@@ -50,6 +54,8 @@ class GCSStorage:
     The bucket is fixed per instance. The client is created on first upload, using
     Application Default Credentials, unless one is passed in (tests pass a fake).
     """
+
+    kind = "gcs"
 
     def __init__(
         self,

@@ -107,9 +107,19 @@ falae turns an article into a single narrated MP3. It uses Google Cloud Text-to-
 
 - **`falae/api.py`** is the HTTP service that will run on Cloud Run. It has `POST /synthesize` and `GET /healthz`.
   - `POST /synthesize` is asynchronous: synthesis takes 30–60 seconds, so the endpoint only validates the request and returns **`202 Accepted`** with `{"status": "accepted", "location": "gs://com-talleye-falae/<file>.mp3"}`. Invalid input still gets an immediate `422`.
-  - The pipeline then runs as a FastAPI background task after the response is sent. Nothing is sent back when it finishes; check `location` for the file.
+  - The pipeline then runs as a FastAPI background task after the response is sent. Check `location` for the file, or set a webhook (below) to be told when it's done.
   - The task is a plain `def`, so the blocking TTS and ffmpeg work runs in the threadpool.
-  - Failures can't reach the caller, so they're only logged (`synthesis failed for <file>`, with the traceback). Successes log `saved <location> …`.
+  - Failures are logged (`synthesis failed for <file>`, with the traceback). Successes log `saved <location> …`.
+- **Webhook** (`falae/webhook.py`): if `FALAE_WEBHOOK_URL` is set, each finished job `POST`s JSON to it:
+
+  ```json
+  {"storage": "gcs", "file_path": "gs://com-talleye-falae/<file>.mp3", "message": "The audio file is ready for you!"}
+  ```
+
+  - `storage` is `local` or `gcs`; `file_path` is the same value as `location` in the `202` response.
+  - On failure, `message` is the error message (no traceback), and `file_path` is where the file would have been.
+  - Delivery is best effort: one attempt with a 10-second timeout, no retries. A failed delivery is logged (`webhook delivery failed for <file>`) and doesn't affect the job.
+  - The URL must be `http` or `https`; anything else stops the server at startup. The CLI ignores it.
 - **Access control** (`falae/auth.py`) applies to `POST /synthesize` only; `GET /healthz` stays open. Both settings are optional and fixed per process:
 
   | Variable | Effect when set | When unset |
