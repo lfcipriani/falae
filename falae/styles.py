@@ -31,6 +31,7 @@ STYLES: dict[str, BlockStyle] = {
     "title": BlockStyle(pause_after="800ms"),
     "byline": BlockStyle(pause_after="1500ms"),
     "takeaways_label": BlockStyle(pause_after="600ms"),
+    "takeaways_end": BlockStyle(pause_before="1200ms", pause_after="1200ms"),
     # Markdown structure
     "h1": BlockStyle(pause_before="1500ms", pause_after="800ms"),
     "h2": BlockStyle(pause_before="1200ms", pause_after="600ms"),
@@ -42,7 +43,7 @@ STYLES: dict[str, BlockStyle] = {
     "list_item": BlockStyle(pause_after="300ms"),
     "blockquote": BlockStyle(pause_before="400ms", pause_after="400ms"),
     "table_row": BlockStyle(pause_after="400ms"),
-    # Thematic break (---) and the end of the takeaways section
+    # Thematic break (---)
     "separator": BlockStyle(pause_after="1200ms"),
 }
 

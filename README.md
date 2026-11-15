@@ -53,7 +53,7 @@ falae turns an article into a single narrated MP3. It uses Google Cloud Text-to-
    | `content` | yes | The article in Markdown. Plain text is valid Markdown too. |
    | `title` | no | Read first. If the content starts with the same heading, that heading is skipped. |
    | `author`, `published_date` | no | Read as a byline ("Por … Publicado em …"), using whichever is present. |
-   | `takeaways` | no | Markdown. Read after the intro, before the content, introduced by "Principais pontos." / "Key takeaways." |
+   | `takeaways` | no | Markdown. Read after the intro, before the content, introduced by "Principais pontos." / "Key takeaways." and closed by "Agora, o artigo." / "Now, the article." |
    | `link` | no | Never read aloud; stored in the MP3's `comment` tag. |
 
    Options: `voice`, `input_format` (`ssml` or `markup`) and `speaking_rate`.
@@ -72,7 +72,7 @@ falae turns an article into a single narrated MP3. It uses Google Cloud Text-to-
    - Indented code blocks are turned off, so indented plain text is still read.
    - Paragraphs: a blank line ends a paragraph. A single line break also ends one if the line ends like a sentence; otherwise it's soft wrapping and the lines are joined. This way plain text with one paragraph per line still splits properly.
 3. **Render and chunk** (`text.py`, `styles.py`, `sentences.py`)
-   - Narration order: title → byline → takeaways (then a pause) → content.
+   - Narration order: title → byline → takeaways (label, items, closing phrase, with pauses around the closing phrase) → content.
    - Each block is rendered using its style in **`styles.py`**. There's one entry per block kind (`h1`…`h6`, `paragraph`, `list_item`, `blockquote`, `table_row`, `title`, `byline`, …), each with:
      - `pause_before` / `pause_after`, which become `<break>`;
      - optional `rate` / `pitch` / `volume`, which become `<prosody>`, e.g. a slower, lower tone for `h1`. Prosody is off by default because Google doesn't document Chirp's valid ranges; try it with a real run.

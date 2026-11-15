@@ -25,8 +25,8 @@ class Article:
 
 @dataclass(frozen=True)
 class Block:
-    """A speakable unit. kind: title, byline, takeaways_label, heading, paragraph,
-    list_item, blockquote, table_row or separator. level is the heading level (1-6)."""
+    """A speakable unit. kind: title, byline, takeaways_label, takeaways_end, heading,
+    paragraph, list_item, blockquote, table_row or separator. level is the heading level (1-6)."""
 
     kind: str
     text: str = ""

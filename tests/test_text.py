@@ -20,7 +20,7 @@ def test_narration_order_intro_takeaways_then_body(article):
         ("takeaways_label", "Principais pontos."),
         ("list_item", "Ponto um."),
         ("list_item", "Ponto dois."),
-        ("separator", ""),
+        ("takeaways_end", "Agora, o artigo."),
     ]
     # the "# Um título" heading duplicates the title, so it's dropped
     assert blocks[6] == ("heading", "Introdução")
@@ -111,7 +111,19 @@ def test_oversized_paragraph_and_sentence_are_split(fmt):
 def test_unknown_language_falls_back_to_english():
     art = Article("ja-JP", "本文。", author="Jane", takeaways="要点。")
     [chunk] = build_chunks(art, InputFormat.SSML)
-    assert "By Jane." in chunk and "Key takeaways." in chunk
+    assert "By Jane." in chunk and "Key takeaways." in chunk and "Now, the article." in chunk
+
+
+def test_takeaways_end_is_set_apart_by_pauses(article):
+    [chunk] = build_chunks(article, InputFormat.SSML)
+    end = STYLES["takeaways_end"]
+    assert (f'<p>Ponto dois.</p><break time="{end.pause_before}"/>'
+            f'<p>Agora, o artigo.</p><break time="{end.pause_after}"/>') in chunk
+
+
+def test_no_takeaways_end_without_takeaways():
+    art = Article("pt-BR", "Texto.", title="T")
+    assert all(b.kind != "takeaways_end" for b in article_blocks(art))
 
 
 @pytest.mark.parametrize("fmt, unexpected", [

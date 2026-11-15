@@ -2,7 +2,8 @@
 
 Order of the narration:
 1. intro: title, then byline ("By <author>. Published on <date>."), each only if given
-2. takeaways (Markdown), introduced by a spoken label, then a separator pause
+2. takeaways (Markdown), introduced by a spoken label and closed by a spoken
+   phrase that announces the article, each set apart by pauses
 3. content (Markdown); a leading heading identical to the title is dropped
 
 Each block is rendered to SSML (<p>, <break>, optional <prosody>; no <s>, the
@@ -22,19 +23,20 @@ from .models import Article, Block, InputFormat
 from .sentences import split_sentences
 from .styles import STYLES, BlockStyle, style_key
 
-INTRO_PHRASES = {  # (by author, published on date, takeaways label)
-    "pt": ("Por {author}.", "Publicado em {date}.", "Principais pontos."),
-    "es": ("Por {author}.", "Publicado el {date}.", "Puntos clave."),
-    "fr": ("Par {author}.", "Publié le {date}.", "Points clés."),
-    "de": ("Von {author}.", "Veröffentlicht am {date}.", "Die wichtigsten Punkte."),
-    "it": ("Di {author}.", "Pubblicato il {date}.", "Punti chiave."),
-    "en": ("By {author}.", "Published on {date}.", "Key takeaways."),
+INTRO_PHRASES = {  # (by author, published on date, takeaways label, takeaways end)
+    "pt": ("Por {author}.", "Publicado em {date}.", "Principais pontos.", "Agora, o artigo."),
+    "es": ("Por {author}.", "Publicado el {date}.", "Puntos clave.", "Ahora, el artículo."),
+    "fr": ("Par {author}.", "Publié le {date}.", "Points clés.", "Place à l'article."),
+    "de": ("Von {author}.", "Veröffentlicht am {date}.", "Die wichtigsten Punkte.",
+           "Und nun zum Artikel."),
+    "it": ("Di {author}.", "Pubblicato il {date}.", "Punti chiave.", "Ora, l'articolo."),
+    "en": ("By {author}.", "Published on {date}.", "Key takeaways.", "Now, the article."),
 }
 DATE_PLACEHOLDER = "\0DATE\0"  # rendered per format (SSML <say-as> vs plain)
 
 
 def article_blocks(article: Article) -> list[Block]:
-    by_tpl, date_tpl, takeaways_label = INTRO_PHRASES.get(
+    by_tpl, date_tpl, takeaways_label, takeaways_end = INTRO_PHRASES.get(
         article.language.split("-")[0].lower(), INTRO_PHRASES["en"]
     )
     title = (article.title or "").strip()
@@ -53,7 +55,8 @@ def article_blocks(article: Article) -> list[Block]:
 
     takeaways = parse_markdown(article.takeaways) if article.takeaways else []
     if takeaways:
-        blocks += [Block("takeaways_label", takeaways_label), *takeaways, Block("separator")]
+        blocks += [Block("takeaways_label", takeaways_label), *takeaways,
+                   Block("takeaways_end", takeaways_end)]
 
     body = parse_markdown(article.content)
     if title and body and body[0].kind == "heading" and _same_text(body[0].text, title):
