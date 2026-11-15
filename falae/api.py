@@ -9,7 +9,7 @@ from functools import lru_cache
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Request, Security, status
 from fastapi.security import APIKeyHeader
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from .auth import API_KEY_HEADER, AccessPolicy
 from .languages import resolve_language
@@ -71,10 +71,38 @@ class SynthesizeRequest(BaseModel):
     input_format: InputFormat = InputFormat.SSML
     speaking_rate: float = Field(1.0, ge=0.25, le=2.0)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _blank_means_unset(cls, data: object) -> object:
+        """Callers like n8n send "" or null for empty fields. For optional fields, treat both
+        (and whitespace-only strings) as not sent, so defaults apply. Required fields still 422."""
+        if not isinstance(data, dict):
+            return data
+        optional = {name for name, f in cls.model_fields.items() if not f.is_required()}
+        return {k: v for k, v in data.items()
+                if not (k in optional and (v is None or (isinstance(v, str) and not v.strip())))}
+
     @field_validator("language")
     @classmethod
     def _resolve_language(cls, value: str) -> str:
         return resolve_language(value)  # ValueError becomes a 422
+
+    @field_validator("published_date", mode="wrap")
+    @classmethod
+    def _lenient_date(cls, value: object, handler) -> dt.date | None:
+        """A bad date only loses the byline date, so it's ignored instead of failing the request.
+        ISO datetimes ("2026-11-15T10:30:00Z") are accepted and keep just the date."""
+        try:
+            return handler(value)
+        except ValidationError:
+            pass
+        if isinstance(value, str):
+            try:
+                return dt.datetime.fromisoformat(value.strip()).date()
+            except ValueError:
+                pass
+        log.warning("ignoring invalid published_date %r", value)
+        return None
 
 
 class SynthesizeAccepted(BaseModel):

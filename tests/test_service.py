@@ -119,3 +119,53 @@ def test_api_rejects_unsupported_language():
     resp = TestClient(api.app).post("/synthesize", json={"language": "xx", "content": "Hi."})
     assert resp.status_code == 422
     assert "isn't supported" in resp.text
+
+
+OPTIONAL_FIELDS = ["title", "author", "published_date", "link", "takeaways",
+                   "voice", "input_format", "speaking_rate"]
+
+
+@pytest.mark.parametrize("blank", ["", "   ", None])
+def test_blank_optional_fields_count_as_unset(blank):
+    req = api.SynthesizeRequest.model_validate(
+        {"language": "pt-BR", "content": "Texto.", **{f: blank for f in OPTIONAL_FIELDS}})
+    assert req == api.SynthesizeRequest(language="pt-BR", content="Texto.")
+    assert (req.voice, req.input_format, req.speaking_rate) == ("Charon", InputFormat.SSML, 1.0)
+
+
+@pytest.mark.parametrize("field", ["language", "content"])
+@pytest.mark.parametrize("blank", ["", None])
+def test_blank_required_fields_are_still_rejected(field, blank):
+    resp = TestClient(api.app).post("/synthesize", json={"language": "pt-BR", "content": "Texto.",
+                                                         field: blank})
+    assert resp.status_code == 422
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("2026-11-15", dt.date(2026, 11, 15)),
+    ("2026-11-15T10:30:00Z", dt.date(2026, 11, 15)),  # ISO datetime, as n8n often sends
+    ("2026-11-15T10:30:00.000+01:00", dt.date(2026, 11, 15)),
+    ("15/11/2026", None),
+    ("yesterday", None),
+    ("2026-02-30", None),
+    ([2026, 11, 15], None),
+])
+def test_invalid_published_date_is_ignored(value, expected):
+    req = api.SynthesizeRequest.model_validate(
+        {"language": "pt-BR", "content": "Texto.", "published_date": value})
+    assert req.published_date == expected
+
+
+def test_api_accepts_blank_fields_and_bad_date(local_storage, monkeypatch, silent_mp3):
+    fake = FakeSynthesizer(silent_mp3)
+    monkeypatch.setattr(api, "synthesize_article",
+                        lambda a, s, o: synthesize_article(a, s, o, synthesizer=fake))
+    resp = TestClient(api.app).post("/synthesize", json={
+        "language": "pt-BR", "content": "Texto.", "title": "Olá", "author": "",
+        "published_date": "not a date", "link": None, "takeaways": "",
+        "voice": "", "input_format": None, "speaking_rate": "",
+    })
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["location"].endswith("/ola.mp3")
+    [(chunks, _, fmt)] = fake.calls
+    assert fmt == InputFormat.SSML and "Por" not in chunks[0]

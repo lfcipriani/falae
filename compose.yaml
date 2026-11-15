@@ -25,6 +25,7 @@ services:
         source: ${GOOGLE_APPLICATION_CREDENTIALS:-~/.config/gcloud/application_default_credentials.json}
         target: /secrets/gcp.json
         read_only: true
+    networks: [n8n_default]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8013/healthz')"]
       interval: 30s
